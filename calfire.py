@@ -4,6 +4,7 @@
 '''
 
 import sys, os
+import math
 import requests
 from datetime import datetime
 import unicodedata
@@ -15,7 +16,7 @@ from bs4 import BeautifulSoup
 url_paras = {
     'year': 2016,
     'pc' : 50,
-    'cp' : 0,
+    'page' : 0,
 }
 
 config_file = 'calfire.config.json'
@@ -33,7 +34,7 @@ root.setLevel(logging.INFO)
 
 def form_url(url_paras):
     base_url = 'http://cdfdata.fire.ca.gov/incidents/incidents_archived?archive_year=%d&pc=%d&cp=%d'
-    url = base_url % (url_paras['year'], url_paras['pc'], url_paras['cp'])
+    url = base_url % (url_paras['year'], url_paras['pc'], url_paras['page'])
     return url
 
 def get_web_res(year, page):
@@ -46,15 +47,15 @@ def get_web_res(year, page):
         raise Exception('bad request') 
     return result
 
-def simple_reports_process(content, res_reports):
-    try:
-        ## get html content
-        result = get_web_res(year, page)
-        ## form soup object
-        soup = BeautifulSoup(result.content, 'lxml')
-        ## get table of insterest
-        report_tables = soup.find_all('table', {'class' : 'incident_table'})
-        for count, r in enumerate(report_tables): ## store into dict
+def simple_reports_process(year, page, res_reports):
+    ## get html content
+    result = get_web_res(year, page)
+    ## form soup object
+    soup = BeautifulSoup(result.content, 'lxml')
+    ## get table of insterest
+    report_tables = soup.find_all('table', {'class' : 'incident_table'})
+    for count, r in enumerate(report_tables): ## store into dict
+        try:
             '''
             name, href
             county
@@ -105,18 +106,18 @@ def simple_reports_process(content, res_reports):
             ## update stats
             stats['success'].append(stats_str % (year, page, count, firename))
             #print("success ", stats_str % (year, page, count, firename))
-
-    except Exception as e:
-        exc_type, exc_obj, exc_tb = sys.exc_info()
-        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        print(exc_type, fname, exc_tb.tb_lineno)
-        print(e)
-        print('skip this page, continue...')
-        stats['fail'].append(stats_str % (year, page, count, firename))
-        logging.warn("fail ", stats_str % (year, page, count, firename))
-        sys.stdin.read(1)
-        continue
-
+    
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            print(e)
+            print('skip this page, continue...')
+            stats['fail'].append(stats_str % (year, page, count, firename))
+            logging.warn("fail ", stats_str % (year, page, count, firename))
+            sys.stdin.read(1)
+            continue
+    return res_reports
 
 def simple_reports(year_range, page_range):
     ## python calfire.py 2014 2016 0
@@ -127,9 +128,21 @@ def simple_reports(year_range, page_range):
         ## get maximum page number
         result = get_web_res(year, 0)
         soup = BeautifulSoup(result.content, 'lxml')
-        soup.find_all('img', {'alt', 'Previous Page'})
-        for page in range(page_range[0], page_range[1] + 1): ## through page
+        ## use a for loop to find last number
+        cur_node = soup.find_all('img', {'alt': 'Previous Page'})[0]
+        max_pagenum = 0
+        while True:
+            cur_node = cur_node.next_sibling
+            if cur_node is None:
+                break
+            if cur_node.name is None:
+                continue
+            if len(cur_node.text) > 0:
+                max_pagenum = cur_node.text
+        logging.info('max_pagenum is ' + str(max_pagenum))
+        for page in range(page_range[0], min(page_range[1], int(max_pagenum)) + 1): ## through page
             logging.info('page ' + str(page))
+            res_reports = simple_reports_process(year, page, res_reports)
 
         ## write to file
         ## load output folder
